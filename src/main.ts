@@ -1,6 +1,7 @@
 import { lstat, readdir } from "fs/promises";
 import type { Dirent } from "fs";
 import { Plugin, PluginSettingTab, Setting, App } from "obsidian";
+import picomatch from "picomatch";
 
 /* ── Type augmentations for internal Obsidian APIs ─────────── */
 
@@ -23,22 +24,7 @@ interface PrivateAdapter {
 	reconcileFolderCreation(realPath: string, path: string): Promise<void>;
 }
 
-/* ── Settings ──────────────────────────────────────────────── */
-
-interface ShowHiddenFilesSettings {
-	showAllFileTypes: boolean;
-	showHiddenFiles: boolean;
-	ignoredHiddenGlobs: string;
-}
-
-const DEFAULT_SETTINGS: ShowHiddenFilesSettings = {
-	showAllFileTypes: true,
-	showHiddenFiles: true,
-	ignoredHiddenGlobs: "",
-};
-
-/** Obsidian internal directories that should never be exposed. */
-const ALWAYS_EXCLUDED = new Set([".trash"]);
+/* ── Utilities ─────────────────────────────────────────────── */
 
 function normalizeVaultPath(path: string): string {
 	return path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
@@ -56,57 +42,63 @@ function parseMultilineSetting(value: string): string[] {
 		.filter((v) => v.length > 0 && !v.startsWith("#"));
 }
 
-/** Simple glob to regex converter. Supports * and **. */
-function globToRegex(glob: string): RegExp {
-	const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
-	const regexStr = escaped
-		.replace(/\*\*/g, "(.+)")
-		.replace(/\*/g, "([^/]+)")
-		.replace(/\?/g, "(.)");
-	return new RegExp(`^${regexStr}$`, "i");
+/** Check if any segment of a path is a dotfile/dotfolder (excluding vault config dir and .trash). */
+function isHiddenPath(path: string): boolean {
+	// A path is considered hidden if any of its segments start with a dot.
+	// We use a regex to avoid redundant path splitting.
+	return /(?:^|\/)\.[^/]/.test(path);
 }
 
-function matchesGlob(path: string, glob: string): boolean {
-	const normalizedPath = normalizeVaultPath(path);
-	const normalizedGlob = normalizeVaultPath(glob);
+/**
+ * Efficiently matches paths against a set of glob patterns using picomatch.
+ */
+class ExclusionMatcher {
+	private matcher: (path: string) => boolean;
 
-	try {
-		// If glob doesn't have separators, match it against any segment
-		if (!normalizedGlob.includes("/")) {
-			return splitVaultPath(normalizedPath).includes(normalizedGlob);
-		}
+	constructor(globs: string[]) {
+		// Transform globs to handle both exact matches and child paths
+		const transformedGlobs = globs.flatMap((glob) => {
+			const normalized = glob.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+			if (!normalized) return [];
 
-		const regex = globToRegex(normalizedGlob);
-		return (
-			regex.test(normalizedPath) ||
-			normalizedPath.startsWith(`${normalizedGlob}/`)
-		);
-	} catch {
-		return false;
+			const hasSeparator = normalized.includes("/");
+			const isMatchAnywhere = !hasSeparator && !normalized.startsWith("**/");
+
+			const base = isMatchAnywhere ? `**/${normalized}` : normalized;
+			// Match the path itself and any children
+			return [base, `${base}/**`];
+		});
+
+		this.matcher = picomatch(transformedGlobs, {
+			dot: true,
+			nocase: true,
+		});
+	}
+
+	public matches(path: string): boolean {
+		return this.matcher(path);
 	}
 }
 
-function isAlwaysExcludedPath(path: string, configDir: string): boolean {
-	const normalizedPath = normalizeVaultPath(path);
+/* ── Settings ──────────────────────────────────────────────── */
 
-	return splitVaultPath(normalizedPath).some((segment) =>
-		ALWAYS_EXCLUDED.has(segment),
-	);
+interface ShowHiddenFilesSettings {
+	showAllFileTypes: boolean;
+	showHiddenFiles: boolean;
+	ignoredHiddenGlobs: string;
 }
 
-/** Check if any segment of a path is a dotfile/dotfolder (excluding vault config dir and .trash). */
-function isHiddenPath(path: string, configDir: string): boolean {
-	const segments = splitVaultPath(path);
-	return (
-		!isAlwaysExcludedPath(path, configDir) &&
-		segments.some((s) => s.startsWith("."))
-	);
-}
+const DEFAULT_SETTINGS: ShowHiddenFilesSettings = {
+	showAllFileTypes: true,
+	showHiddenFiles: true,
+	ignoredHiddenGlobs: "",
+};
 
 /* ── Plugin ────────────────────────────────────────────────── */
 
 export default class ShowHiddenFilesPlugin extends Plugin {
 	settings!: ShowHiddenFilesSettings;
+	private matcher!: ExclusionMatcher;
 	private previousShowUnsupportedFiles = false;
 	private originalReconcileDeletion:
 		| PrivateAdapter["reconcileDeletion"]
@@ -125,6 +117,7 @@ export default class ShowHiddenFilesPlugin extends Plugin {
 		this.applyShowAllFileTypes();
 
 		this.app.workspace.onLayoutReady(async () => {
+			this.updateMatcher();
 			if (this.settings.showHiddenFiles) {
 				this.patchAdapter();
 				this.suppressDotfileWarning();
@@ -148,18 +141,9 @@ export default class ShowHiddenFilesPlugin extends Plugin {
 	/* ── settings persistence ──────────────────────────────── */
 
 	async loadSettings() {
-		const loaded = (await this.loadData()) as
-			| (Partial<ShowHiddenFilesSettings> & {
-					ignoredHiddenPaths?: string;
-			  })
-			| null;
+		const loaded = (await this.loadData()) as Partial<ShowHiddenFilesSettings> | null;
 
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded ?? {});
-
-		// Migrate old ignoredHiddenPaths to ignoredHiddenGlobs if it exists
-		if (loaded?.ignoredHiddenPaths && !loaded?.ignoredHiddenGlobs) {
-			this.settings.ignoredHiddenGlobs = loaded.ignoredHiddenPaths;
-		}
 
 		if (!this.settings.ignoredHiddenGlobs && !loaded?.ignoredHiddenGlobs) {
 			this.settings.ignoredHiddenGlobs = [
@@ -167,13 +151,22 @@ export default class ShowHiddenFilesPlugin extends Plugin {
 				".hg",
 				".svn",
 				".DS_Store",
+				".trash",
 				this.app.vault.configDir,
 			].join("\n");
 		}
+
+		this.updateMatcher();
 	}
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	public updateMatcher() {
+		this.matcher = new ExclusionMatcher(
+			parseMultilineSetting(this.settings.ignoredHiddenGlobs),
+		);
 	}
 
 	/* ── show all file types ───────────────────────────────── */
@@ -191,29 +184,14 @@ export default class ShowHiddenFilesPlugin extends Plugin {
 		return this.app.vault.adapter as unknown as PrivateAdapter;
 	}
 
-	private ignoredHiddenGlobs(): string[] {
-		return parseMultilineSetting(this.settings.ignoredHiddenGlobs);
-	}
-
 	private shouldSkipPath(path: string): boolean {
-		const normalizedPath = normalizeVaultPath(path);
-
-		if (isAlwaysExcludedPath(normalizedPath, this.app.vault.configDir)) {
-			return true;
-		}
-
-		return this.ignoredHiddenGlobs().some((glob) =>
-			matchesGlob(normalizedPath, glob),
-		);
+		// Expects already normalized path
+		return this.matcher.matches(path);
 	}
 
 	private shouldRevealHiddenPath(path: string): boolean {
-		const normalizedPath = normalizeVaultPath(path);
-
-		return (
-			isHiddenPath(normalizedPath, this.app.vault.configDir) &&
-			!this.shouldSkipPath(normalizedPath)
-		);
+		// Expects already normalized path
+		return isHiddenPath(path) && !this.shouldSkipPath(path);
 	}
 
 	private patchAdapter() {
@@ -225,10 +203,7 @@ export default class ShowHiddenFilesPlugin extends Plugin {
 
 		const origReconcileDeletion = this.originalReconcileDeletion;
 
-		adapter.reconcileDeletion = async (
-			realPath: string,
-			path: string,
-		) => {
+		adapter.reconcileDeletion = async (realPath: string, path: string) => {
 			const normalizedPath = normalizeVaultPath(path);
 			if (
 				this.settings.showHiddenFiles &&
@@ -489,6 +464,7 @@ class ShowHiddenFilesSettingTab extends PluginSettingTab {
 					.onChange(async (value) => {
 						this.plugin.settings.ignoredHiddenGlobs = value;
 						await this.plugin.saveSettings();
+						this.plugin.updateMatcher();
 						this.plugin.scheduleHiddenFilesRefresh();
 					});
 				text.inputEl.rows = 6;

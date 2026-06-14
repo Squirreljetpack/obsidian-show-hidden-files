@@ -1,9 +1,8 @@
-import obsidianmd from "eslint-plugin-obsidianmd";
 import tseslint from "typescript-eslint";
 import globals from "globals";
 
 export default tseslint.config(
-	...obsidianmd.configs.recommended,
+	tseslint.configs.recommended,
 	{
 		files: ["src/**/*.ts"],
 		languageOptions: {
@@ -16,12 +15,10 @@ export default tseslint.config(
 				tsconfigRootDir: import.meta.dirname,
 			},
 		},
-	},
-	{
-		files: ["manifest.json"],
-	},
-	{
-		files: ["LICENSE"],
+		rules: {
+			"@typescript-eslint/no-explicit-any": "off",
+			"@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
+		}
 	},
 	{
 		ignores: [

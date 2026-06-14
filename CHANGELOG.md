@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-06-13
+
+### Added
+- **Picomatch Integration**: Switched to `picomatch` for robust, industry-standard glob matching.
+- **Improved Exclusions**: Better support for directory-level exclusions (e.g. excluding `.git` now correctly hides all its children).
+- **Default Exclusions**: Added `.trash` to the default ignored list.
+
+### Changed
+- **Performance Optimization**: Optimized path matching using a precompiled matcher, significantly reducing overhead during vault scans.
+- **Dependency Cleanup**: Drastically reduced project footprint by removing 200+ redundant transient dependencies and modernizing the linting configuration.
+- **Removed Migration Code**: Simplified internal settings loading by removing legacy migration logic.
+
 ## [1.1.0] - 2026-06-13
 
 ### Added
