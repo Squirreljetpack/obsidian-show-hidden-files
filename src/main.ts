@@ -66,7 +66,7 @@ class ExclusionMatcher {
 			  glob.slice(0, -1).includes("\\");
 			  
 			// "support" windows style paths
-			let pattern = normalizeVaultPath(glob).trim();
+			const pattern = normalizeVaultPath(glob).trim();
 			if (!pattern) return [];
 			
 			const base = isAnchored ? pattern : `**/${pattern}`;
@@ -95,8 +95,8 @@ interface ShowHiddenFilesSettings {
 }
 
 const DEFAULT_SETTINGS: ShowHiddenFilesSettings = {
-	showAllFileTypes: false,
-	showHiddenFiles: false,
+	showAllFileTypes: true,
+	showHiddenFiles: true,
 	ignoredHiddenGlobs: "",
 	renderHtmlImages: false,
 };

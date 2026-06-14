@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-06-13
+
+### Changed
+- **Default Behavior**: "Show hidden files" and "Show all file types" are now enabled by default upon plugin activation.
+- **Improved Reversion**: Display toggles are now fully reverted to their previous state when the plugin is deactivated.
+
 ## [1.2.0] - 2026-06-13
 
 ### Added

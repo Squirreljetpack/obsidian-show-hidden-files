@@ -9,7 +9,7 @@ Reveals hidden dotfiles (`.claude/`, `.gitignore`, `.env`, `.github/`, etc.) and
 - **Ignored hidden globs** — Filter hidden files using glob patterns (e.g. `**/node_modules/*`, `.git/**`). Skip noisy or sensitive entries by exact name or pattern.
 - **Render local HTML images** — (Experimental) Resolves and displays local images used in HTML `<img>` tags. Useful for viewing images stored in hidden folders or non-standard paths.
 
-The display toggles are **disabled by default** (opt-in) and **fully reverted** when the plugin is deactivated.
+The display toggles and **default exclusions** are enabled by default when the plugin is activated and **fully reverted** when the plugin is disabled. Only the local HTML image rendering toggle is disabled by default.
 
 > **Note:** Enabling this plugin exposes sensitive dotfiles (`.env`, `.git-credentials`, etc.) in the Obsidian file explorer, making them viewable, editable, and deletable. Make sure you understand what these files are before modifying them.
 
@@ -33,9 +33,9 @@ Squirreljetpack/obsidian-show-hidden-files
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| Show all file types | Off | Toggle unsupported file extensions in the explorer. Mirrors Obsidian's native "Detect all file extensions" option. |
-| Show hidden files | Off | Toggle dotfiles and dotfolders in the explorer, including nested hidden paths. |
-| Ignored hidden globs | `.git*`, `.hg`, `.svn`, `.DS_Store`, `.trash`, `.obsidian` | Filter hidden files using glob patterns (e.g. `**/node_modules/*`, `.git/**`). One pattern per line. Names without separators match any path segment. |
+| Show all file types | **On** | Toggle unsupported file extensions in the explorer. Mirrors Obsidian's native "Detect all file extensions" option. |
+| Show hidden files | **On** | Toggle dotfiles and dotfolders in the explorer, including nested hidden paths. |
+| Ignored hidden globs | **`/.git*`, `.hg`, `.svn`, `.DS_Store`, `/.trash`, `.obsidian`** | Filter hidden files using glob patterns (e.g. `**/node_modules/*`, `.git/**`). One pattern per line. Names without separators match any path segment. |
 | Render local HTML images | Off | Resolve and display local images in HTML `<img>` tags. |
 
 Examples for **Ignored hidden globs**:
