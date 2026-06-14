@@ -6,7 +6,7 @@ Reveals hidden dotfiles (`.claude/`, `.gitignore`, `.env`, `.github/`, etc.) and
 
 - **Show all file types** — Exposes files with unsupported extensions (`.json`, `.yml`, `.toml`, etc.) in the file explorer. Synced with Obsidian's native "Detect all file extensions" setting.
 - **Show hidden files** — Shows files and folders whose names start with a dot, including hidden files inside subdirectories and normal files inside hidden folders.
-- **Ignored hidden paths** — Skip noisy or sensitive entries by exact name or vault-relative path.
+- **Ignored hidden globs** — Filter hidden files using glob patterns (e.g. `**/node_modules/*`, `.git/**`). Skip noisy or sensitive entries by exact name or pattern.
 
 The display toggles are **enabled by default** when the plugin is activated and **fully reverted** when the plugin is disabled.
 
@@ -20,19 +20,12 @@ The display toggles are **enabled by default** when the plugin is activated and 
 2. Search for **Show Hidden Files**
 3. Click **Install**, then **Enable**
 
-### Manual
-
-1. Download `main.js`, `manifest.json`, and `styles.css` (if present) from the [latest release](https://github.com/witi42/obsidian-show-hidden-files/releases/latest).
-2. Create the folder `.obsidian/plugins/show-hidden-files/` inside your vault.
-3. Copy the downloaded files into that folder.
-4. Open **Settings → Community plugins**, refresh the list, and enable **Show Hidden Files**.
-
 ### BRAT
 
 Install via [BRAT](https://github.com/TfTHacker/obsidian42-brat) with the repo URL:
 
 ```
-witi42/obsidian-show-hidden-files
+Squirreljetpack/obsidian-show-hidden-files
 ```
 
 ## Settings
@@ -40,22 +33,24 @@ witi42/obsidian-show-hidden-files
 | Setting | Default | Description |
 |---------|---------|-------------|
 | Show all file types | On | Toggle unsupported file extensions in the explorer. Mirrors Obsidian's native "Detect all file extensions" option. |
-| Show hidden files | On | Toggle dotfiles and dotfolders in the explorer, including nested hidden paths. `.obsidian` and `.trash` are always excluded. |
-| Ignored hidden paths | `.git`, `.hg`, `.svn`, `.DS_Store` | One exact name or vault-relative path per line. A name matches any path segment; a path matches that item and all of its children. |
+| Show hidden files | On | Toggle dotfiles and dotfolders in the explorer, including nested hidden paths. `.trash` is always excluded. |
+| Ignored hidden globs | `.git*`, `.hg`, `.svn`, `.DS_Store`, `.obsidian` | Filter hidden files using glob patterns (e.g. `**/node_modules/*`, `.git/**`). One pattern per line. Names without separators match any path segment. |
 
-Examples for **Ignored hidden paths**:
+Examples for **Ignored hidden globs**:
 
 ```text
-.git
+.git*
 .DS_Store
-node_modules
+.obsidian
+**/node_modules/*
 Research/.env
+**/temp*
 ```
 
 ## Building from source
 
 ```bash
-git clone https://github.com/witi42/obsidian-show-hidden-files.git
+git clone https://github.com/Squirreljetpack/obsidian-show-hidden-files.git
 cd obsidian-show-hidden-files
 npm install
 npm run build
@@ -69,11 +64,15 @@ For development with hot-reload:
 npm run dev
 ```
 
+## Acknowledgments
+
+This plugin was originally created by [witi42](https://github.com/witi42/obsidian-show-hidden-files).
+
 ## How it works
 
 - **Show all file types** uses Obsidian's internal `vault.setConfig('showUnsupportedFiles', …)` API to toggle the native setting programmatically.
 - **Show hidden files** intercepts the vault adapter's `reconcileDeletion` method — when Obsidian tries to hide a dotfile, the plugin re-registers it instead. The plugin also scans the vault filesystem recursively so hidden paths inside subdirectories are discovered on startup.
-- **Ignored hidden paths** are checked before registration. Ignored folders are not scanned, so large folders such as `.git` stay out of the file explorer.
+- **Ignored hidden globs** are checked before registration. Ignored folders are not scanned, so large folders such as `.git` stay out of the file explorer.
 - On disable, both settings are restored to their previous values and all revealed dotfiles are hidden again.
 
 ## Compatibility

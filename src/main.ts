@@ -28,17 +28,13 @@ interface PrivateAdapter {
 interface ShowHiddenFilesSettings {
 	showAllFileTypes: boolean;
 	showHiddenFiles: boolean;
-	ignoredHiddenPaths: string;
+	ignoredHiddenGlobs: string;
 }
-
-const DEFAULT_IGNORED_HIDDEN_PATHS = [".git", ".hg", ".svn", ".DS_Store"].join(
-	"\n",
-);
 
 const DEFAULT_SETTINGS: ShowHiddenFilesSettings = {
 	showAllFileTypes: true,
 	showHiddenFiles: true,
-	ignoredHiddenPaths: DEFAULT_IGNORED_HIDDEN_PATHS,
+	ignoredHiddenGlobs: "",
 };
 
 /** Obsidian internal directories that should never be exposed. */
@@ -53,24 +49,45 @@ function splitVaultPath(path: string): string[] {
 	return normalizedPath ? normalizedPath.split("/") : [];
 }
 
-function parseIgnoredHiddenPaths(value: string): string[] {
+function parseMultilineSetting(value: string): string[] {
 	return value
 		.split(/[\n,]/)
-		.map((path) => normalizeVaultPath(path.trim()))
-		.filter((path) => path.length > 0 && !path.startsWith("#"));
+		.map((v) => v.trim())
+		.filter((v) => v.length > 0 && !v.startsWith("#"));
+}
+
+/** Simple glob to regex converter. Supports * and **. */
+function globToRegex(glob: string): RegExp {
+	const escaped = glob.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+	const regexStr = escaped
+		.replace(/\*\*/g, "(.+)")
+		.replace(/\*/g, "([^/]+)")
+		.replace(/\?/g, "(.)");
+	return new RegExp(`^${regexStr}$`, "i");
+}
+
+function matchesGlob(path: string, glob: string): boolean {
+	const normalizedPath = normalizeVaultPath(path);
+	const normalizedGlob = normalizeVaultPath(glob);
+
+	try {
+		// If glob doesn't have separators, match it against any segment
+		if (!normalizedGlob.includes("/")) {
+			return splitVaultPath(normalizedPath).includes(normalizedGlob);
+		}
+
+		const regex = globToRegex(normalizedGlob);
+		return (
+			regex.test(normalizedPath) ||
+			normalizedPath.startsWith(`${normalizedGlob}/`)
+		);
+	} catch {
+		return false;
+	}
 }
 
 function isAlwaysExcludedPath(path: string, configDir: string): boolean {
 	const normalizedPath = normalizeVaultPath(path);
-	const configDirPath = normalizeVaultPath(configDir);
-
-	if (
-		configDirPath &&
-		(normalizedPath === configDirPath ||
-			normalizedPath.startsWith(`${configDirPath}/`))
-	) {
-		return true;
-	}
 
 	return splitVaultPath(normalizedPath).some((segment) =>
 		ALWAYS_EXCLUDED.has(segment),
@@ -84,22 +101,6 @@ function isHiddenPath(path: string, configDir: string): boolean {
 		!isAlwaysExcludedPath(path, configDir) &&
 		segments.some((s) => s.startsWith("."))
 	);
-}
-
-function matchesIgnoredPath(path: string, ignoredPath: string): boolean {
-	const normalizedPath = normalizeVaultPath(path);
-	const normalizedIgnoredPath = normalizeVaultPath(ignoredPath);
-
-	if (!normalizedPath || !normalizedIgnoredPath) return false;
-
-	if (normalizedIgnoredPath.includes("/")) {
-		return (
-			normalizedPath === normalizedIgnoredPath ||
-			normalizedPath.startsWith(`${normalizedIgnoredPath}/`)
-		);
-	}
-
-	return splitVaultPath(normalizedPath).includes(normalizedIgnoredPath);
 }
 
 /* ── Plugin ────────────────────────────────────────────────── */
@@ -147,10 +148,27 @@ export default class ShowHiddenFilesPlugin extends Plugin {
 	/* ── settings persistence ──────────────────────────────── */
 
 	async loadSettings() {
-		const loaded = (await this.loadData()) as Partial<ShowHiddenFilesSettings> | null;
+		const loaded = (await this.loadData()) as
+			| (Partial<ShowHiddenFilesSettings> & {
+					ignoredHiddenPaths?: string;
+			  })
+			| null;
+
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded ?? {});
-		if (typeof this.settings.ignoredHiddenPaths !== "string") {
-			this.settings.ignoredHiddenPaths = DEFAULT_IGNORED_HIDDEN_PATHS;
+
+		// Migrate old ignoredHiddenPaths to ignoredHiddenGlobs if it exists
+		if (loaded?.ignoredHiddenPaths && !loaded?.ignoredHiddenGlobs) {
+			this.settings.ignoredHiddenGlobs = loaded.ignoredHiddenPaths;
+		}
+
+		if (!this.settings.ignoredHiddenGlobs && !loaded?.ignoredHiddenGlobs) {
+			this.settings.ignoredHiddenGlobs = [
+				".git*",
+				".hg",
+				".svn",
+				".DS_Store",
+				this.app.vault.configDir,
+			].join("\n");
 		}
 	}
 
@@ -173,8 +191,8 @@ export default class ShowHiddenFilesPlugin extends Plugin {
 		return this.app.vault.adapter as unknown as PrivateAdapter;
 	}
 
-	private ignoredHiddenPaths(): string[] {
-		return parseIgnoredHiddenPaths(this.settings.ignoredHiddenPaths);
+	private ignoredHiddenGlobs(): string[] {
+		return parseMultilineSetting(this.settings.ignoredHiddenGlobs);
 	}
 
 	private shouldSkipPath(path: string): boolean {
@@ -184,8 +202,8 @@ export default class ShowHiddenFilesPlugin extends Plugin {
 			return true;
 		}
 
-		return this.ignoredHiddenPaths().some((ignoredPath) =>
-			matchesIgnoredPath(normalizedPath, ignoredPath),
+		return this.ignoredHiddenGlobs().some((glob) =>
+			matchesGlob(normalizedPath, glob),
 		);
 	}
 
@@ -459,16 +477,17 @@ class ShowHiddenFilesSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
-			.setName("Ignored hidden paths")
+			.setName("Ignored hidden globs")
 			.setDesc(
-				"One name or vault-relative path per line. Names match any segment; paths match that item and all of its children. The vault config folder and .trash are always ignored.",
+				"Filter hidden files using glob patterns (e.g. **/node_modules/*, .git/**). One pattern per line. Names without separators match any path segment.",
 			)
 			.addTextArea((text) => {
-				text
-					.setPlaceholder(".git\n.DS_Store\nsome-folder/.env")
-					.setValue(this.plugin.settings.ignoredHiddenPaths)
+				text.setPlaceholder(
+					`.git*\n.DS_Store\n${this.app.vault.configDir}\n**/node_modules/*`,
+				)
+					.setValue(this.plugin.settings.ignoredHiddenGlobs)
 					.onChange(async (value) => {
-						this.plugin.settings.ignoredHiddenPaths = value;
+						this.plugin.settings.ignoredHiddenGlobs = value;
 						await this.plugin.saveSettings();
 						this.plugin.scheduleHiddenFilesRefresh();
 					});
